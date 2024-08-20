@@ -1,0 +1,79 @@
+# docker-compose 실행 후 elasticsearch container 접속 후 아래 명령어로 nori 한글 형태소 분석기 설치 후 재기동
+# bin/elasticsearch-plugin install analysis-nori
+
+# java agent 포함한 VM Option
+# -javaagent:./apm-agent/elastic-apm-agent-1.51.0.jar -Delastic.apm.server_urls=http://localhost:8200 -Delastic.apm.service_name=boot-apm-agent -Delastic.apm.application_packages=com.example -Delastic.apm.environment=dev -Dspring.profiles.active=dev
+
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
+    container_name: elasticsearch
+    environment:
+      - node.name=single
+      - cluster.name=standalone
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - xpack.security.transport.ssl.enabled=false
+      - ES_JAVA_OPTS=-Xms1g -Xmx1g
+    volumes:
+      - data:/usr/share/elasticsearch/data
+    ports:
+      - 9200:9200
+      - 9300:9300
+    networks:
+      - es-bridge
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.15.0
+    container_name: logstash
+    ports:
+      - 5001:5001
+      - 9600:9600
+    environment:
+      - ELASTICSEARCH_HOSTS=["http://elasticsearch:9200"]
+    volumes:
+      - ./logstash.conf:/usr/share/logstash/pipeline/logstash.conf
+    depends_on:
+      - elasticsearch
+    networks:
+      - es-bridge
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.15.0
+    container_name: kibana
+    ports:
+      - 5601:5601
+    environment:
+      - ELASTICSEARCH_HOSTS=["http://elasticsearch:9200"]
+    depends_on:
+      - elasticsearch
+    networks:
+      - es-bridge
+
+  apm-server:
+    container_name: apm-server
+    image: docker.elastic.co/apm/apm-server:8.15.0
+    ports:
+      - 8200:8200
+    depends_on:
+      - elasticsearch
+      - kibana
+    networks:
+      - es-bridge
+    command: >
+      apm-server -e
+              -E apm-server.rum.enabled=true
+              -E apm-server.rum.allow_origins=["*"]
+              -E apm-server.rum.allow_headers=[]
+              -E setup.kibana.host=kibana:5601
+              -E setup.template.settings.index.number_of_replicas=0
+              -E apm-server.kibana.enabled=true
+              -E apm-server.kibana.host=kibana:5601
+              -E output.elasticsearch.hosts=["elasticsearch:9200"]
+
+volumes:
+  data:
+    driver: local
+networks:
+  es-bridge:
+    driver: bridge
